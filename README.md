@@ -41,10 +41,10 @@ API 키는 소스와 APK에 포함되지 않습니다. 앱에서 입력한 값�
 
 ```bash
 ./gradlew testDebugUnitTest
-./gradlew assembleDebug
+./gradlew assembleRelease
 ```
 
-설치 가능한 APK는 `app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. GitHub Actions도 같은 테스트와 빌드를 실행하고 APK를 아티팩트로 보관합니다.
+설치 가능한 APK는 `app/build/outputs/apk/release/app-release.apk`에 생성됩니다. GitHub Actions도 같은 테스트와 빌드를 실행하고 APK를 아티팩트로 보관합니다.
 
 ## 배포 서명
 
