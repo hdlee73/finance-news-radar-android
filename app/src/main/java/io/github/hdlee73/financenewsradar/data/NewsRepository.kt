@@ -8,7 +8,7 @@ import io.github.hdlee73.financenewsradar.model.OutletScope
 import io.github.hdlee73.financenewsradar.model.SearchPage
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 
 class NewsRepository {
     suspend fun search(
@@ -19,16 +19,36 @@ class NewsRepository {
     ): SearchPage {
         val provider = provider(settings.provider, credentials)
         val page = provider.search(query, settings.timeRange, start)
-        return page.copy(articles = refine(page.articles, settings, listOf(query)))
+        val refined = refine(page.articles, settings, listOf(query))
+        return page.copy(
+            articles = refined.articles,
+            fetchedCount = page.articles.size,
+            duplicateCount = refined.duplicateCount,
+            outletExcludedCount = refined.outletExcludedCount
+        )
     }
 
-    suspend fun home(settings: AppSettings, credentials: NaverCredentials): SearchPage = coroutineScope {
+    suspend fun home(settings: AppSettings, credentials: NaverCredentials): SearchPage = supervisorScope {
         val provider = provider(settings.provider, credentials)
-        val pages = settings.keywords
+        val queries = settings.keywords
             .filter { it.isNotBlank() }
-            .map { keyword -> async { provider.search(expandFinanceQuery(keyword), settings.timeRange, pageSize = 40) } }
+            .flatMap { keyword -> NewsQueryPlanner.homeQueries(keyword, settings.provider) }
+            .distinct()
+        val results = queries
+            .map { query -> async { runCatching { provider.search(query, settings.timeRange, pageSize = 100) } } }
             .awaitAll()
-        SearchPage(refine(pages.flatMap { it.articles }, settings, settings.keywords))
+        val pages = results.mapNotNull { it.getOrNull() }
+        if (pages.isEmpty()) throw results.firstNotNullOfOrNull { it.exceptionOrNull() }
+            ?: IllegalStateException("기사를 불러오지 못했습니다.")
+        val fetched = pages.flatMap { it.articles }
+        val refined = refine(fetched, settings, settings.keywords)
+        SearchPage(
+            articles = refined.articles,
+            fetchedCount = fetched.size,
+            duplicateCount = refined.duplicateCount,
+            outletExcludedCount = refined.outletExcludedCount,
+            failedQueryCount = results.count { it.isFailure }
+        )
     }
 
     private fun provider(type: NewsProviderType, credentials: NaverCredentials): NewsProvider = when (type) {
@@ -36,14 +56,22 @@ class NewsRepository {
         NewsProviderType.NAVER -> NaverNewsProvider(credentials)
     }
 
+    private data class RefinedArticles(
+        val articles: List<NewsArticle>,
+        val duplicateCount: Int,
+        val outletExcludedCount: Int
+    )
+
     private fun refine(
         items: List<NewsArticle>,
         settings: AppSettings,
         keywords: List<String>
-    ): List<NewsArticle> {
+    ): RefinedArticles {
+        val inScope = items.filter {
+            settings.outletScope == OutletScope.ALL || PublisherCatalog.isMajor(it.source, it.link)
+        }
         val seenTitles = mutableSetOf<String>()
-        return items.asSequence()
-            .filter { settings.outletScope == OutletScope.ALL || PublisherCatalog.isMajor(it.source, it.link) }
+        val articles = inScope.asSequence()
             .sortedByDescending { it.publishedAt }
             .filter { article ->
                 val key = NewsText.normalizeTitle(article.title).ifBlank { article.link }
@@ -56,12 +84,27 @@ class NewsRepository {
                 )
             }
             .toList()
+        return RefinedArticles(
+            articles = articles,
+            duplicateCount = inScope.size - articles.size,
+            outletExcludedCount = items.size - inScope.size
+        )
+    }
+
+}
+
+internal object NewsQueryPlanner {
+    fun homeQueries(keyword: String, provider: NewsProviderType): List<String> {
+        val exact = keyword.trim()
+        if (provider != NewsProviderType.GOOGLE_RSS) return listOf(exact)
+        return listOf(exact, expandFinanceQuery(exact)).distinct()
     }
 
     private fun expandFinanceQuery(keyword: String): String = when (keyword.trim()) {
         "금융감독원", "금감원" -> "(금융감독원 OR 금감원) (증권 OR 자산운용 OR 금융투자 OR 펀드)"
         "자산운용사", "운용사" -> "(자산운용사 OR 운용사) (금감원 OR 금융감독 OR 펀드)"
         "증권사" -> "증권사 (금감원 OR 검사 OR 제재 OR 내부통제 OR 금융사고)"
+        "금융투자" -> "금융투자 (금감원 OR 검사 OR 제재 OR 내부통제 OR 금융사고)"
         "금융사고" -> "금융사고 (증권사 OR 운용사 OR 금융투자)"
         else -> keyword
     }

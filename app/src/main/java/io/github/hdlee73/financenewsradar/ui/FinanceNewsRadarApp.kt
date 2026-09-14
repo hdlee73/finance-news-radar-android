@@ -162,6 +162,11 @@ fun FinanceNewsRadarApp(viewModel: NewsViewModel = viewModel()) {
                 title = if (state.bookmarksOnly) "즐겨찾기" else state.currentTitle,
                 count = state.visibleArticles.size,
                 provider = state.settings.provider,
+                bookmarksOnly = state.bookmarksOnly,
+                fetchedCount = state.fetchedCount,
+                duplicateCount = state.duplicateCount,
+                outletExcludedCount = state.outletExcludedCount,
+                failedQueryCount = state.failedQueryCount,
                 onHome = {
                     queryText = ""
                     viewModel.refreshHome()
@@ -272,6 +277,11 @@ private fun ResultHeader(
     title: String,
     count: Int,
     provider: NewsProviderType,
+    bookmarksOnly: Boolean,
+    fetchedCount: Int,
+    duplicateCount: Int,
+    outletExcludedCount: Int,
+    failedQueryCount: Int,
     onHome: () -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -281,8 +291,18 @@ private fun ResultHeader(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            val resultSummary = if (bookmarksOnly) {
+                "${provider.label} · 즐겨찾기 ${count}건"
+            } else {
+                buildString {
+                    append("${provider.label} · 가져온 ${fetchedCount}건 중 ${count}건 표시")
+                    if (duplicateCount > 0) append(" · 중복 ${duplicateCount}건 제외")
+                    if (outletExcludedCount > 0) append(" · 언론 범위 ${outletExcludedCount}건 제외")
+                    if (failedQueryCount > 0) append(" · 일부 검색 ${failedQueryCount}건 실패")
+                }
+            }
             Text(
-                "${provider.label} · 중복 제거 후 ${count}건",
+                resultSummary,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

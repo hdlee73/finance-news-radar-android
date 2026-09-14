@@ -22,7 +22,7 @@ enum class TimeRange(val label: String, val googleToken: String, val duration: D
 data class AppSettings(
     val keywords: List<String> = DEFAULT_KEYWORDS,
     val provider: NewsProviderType = NewsProviderType.GOOGLE_RSS,
-    val outletScope: OutletScope = OutletScope.MAJOR_30,
+    val outletScope: OutletScope = OutletScope.ALL,
     val timeRange: TimeRange = TimeRange.WEEK
 ) {
     companion object {
@@ -50,5 +50,9 @@ data class NewsArticle(
 data class SearchPage(
     val articles: List<NewsArticle>,
     val hasMore: Boolean = false,
-    val nextStart: Int = 1
+    val nextStart: Int = 1,
+    val fetchedCount: Int = articles.size,
+    val duplicateCount: Int = 0,
+    val outletExcludedCount: Int = 0,
+    val failedQueryCount: Int = 0
 )

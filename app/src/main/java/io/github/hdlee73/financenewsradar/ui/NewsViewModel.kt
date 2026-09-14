@@ -34,7 +34,11 @@ data class NewsUiState(
     val nextStart: Int = 1,
     val error: String? = null,
     val lastUpdated: Instant? = null,
-    val bookmarksOnly: Boolean = false
+    val bookmarksOnly: Boolean = false,
+    val fetchedCount: Int = 0,
+    val duplicateCount: Int = 0,
+    val outletExcludedCount: Int = 0,
+    val failedQueryCount: Int = 0
 ) {
     val visibleArticles: List<NewsArticle>
         get() = if (bookmarksOnly) articles.filter { it.isBookmarked } else articles
@@ -70,7 +74,11 @@ class NewsViewModel(application: Application) : AndroidViewModel(application) {
                             isLoading = false,
                             canLoadMore = false,
                             nextStart = 1,
-                            lastUpdated = Instant.now()
+                            lastUpdated = Instant.now(),
+                            fetchedCount = page.fetchedCount,
+                            duplicateCount = page.duplicateCount,
+                            outletExcludedCount = page.outletExcludedCount,
+                            failedQueryCount = page.failedQueryCount
                         )
                     }
                 }
@@ -102,7 +110,11 @@ class NewsViewModel(application: Application) : AndroidViewModel(application) {
                             isLoading = false,
                             canLoadMore = page.hasMore,
                             nextStart = page.nextStart,
-                            lastUpdated = Instant.now()
+                            lastUpdated = Instant.now(),
+                            fetchedCount = page.fetchedCount,
+                            duplicateCount = page.duplicateCount,
+                            outletExcludedCount = page.outletExcludedCount,
+                            failedQueryCount = page.failedQueryCount
                         )
                     }
                 }
@@ -122,11 +134,16 @@ class NewsViewModel(application: Application) : AndroidViewModel(application) {
                     val merged = (current.articles + withBookmarks(page.articles))
                         .distinctBy { NewsText.normalizeTitle(it.title).ifBlank { it.link } }
                         .sortedByDescending { it.publishedAt }
+                    val crossPageDuplicates = current.articles.size + page.articles.size - merged.size
                     current.copy(
                         articles = merged,
                         isLoadingMore = false,
                         canLoadMore = page.hasMore,
-                        nextStart = page.nextStart
+                        nextStart = page.nextStart,
+                        fetchedCount = current.fetchedCount + page.fetchedCount,
+                        duplicateCount = current.duplicateCount + page.duplicateCount + crossPageDuplicates,
+                        outletExcludedCount = current.outletExcludedCount + page.outletExcludedCount,
+                        failedQueryCount = current.failedQueryCount + page.failedQueryCount
                     )
                 }
             }.onFailure(::handleFailure)

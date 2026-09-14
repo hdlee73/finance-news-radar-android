@@ -2,7 +2,6 @@ package io.github.hdlee73.financenewsradar.data
 
 object NewsText {
     private val bracketPrefix = Regex("^(\\[[^]]+]|【[^】]+】|\\([^)]*단독[^)]*\\))\\s*")
-    private val suffix = Regex("\\s*[-–—|]\\s*[^-–—|]{1,24}$")
     private val spaces = Regex("\\s+")
     private val priorityTerms = listOf(
         "금융감독원", "금감원", "검사", "제재", "징계", "기관경고", "기관주의", "경영유의",
@@ -11,7 +10,6 @@ object NewsText {
 
     fun normalizeTitle(title: String): String = title
         .replace(bracketPrefix, "")
-        .replace(suffix, "")
         .replace(Regex("[^가-힣a-zA-Z0-9]"), "")
         .lowercase()
 

@@ -9,8 +9,16 @@ class NewsTextTest {
     @Test
     fun `normalizes publisher suffix and punctuation for duplicate detection`() {
         assertEquals(
-            NewsText.normalizeTitle("[단독] 금감원, 증권사 내부통제 검사 - 연합뉴스"),
-            NewsText.normalizeTitle("금감원 증권사 내부통제 검사 | 뉴스1")
+            NewsText.normalizeTitle("[단독] 금감원, 증권사 내부통제 검사"),
+            NewsText.normalizeTitle("금감원 증권사 내부통제 검사")
+        )
+    }
+
+    @Test
+    fun `keeps meaningful subtitle when detecting duplicates`() {
+        assertTrue(
+            NewsText.normalizeTitle("증권사 내부통제 점검 - 검사 착수") !=
+                NewsText.normalizeTitle("증권사 내부통제 점검 - 제재 확정")
         )
     }
 
