@@ -117,13 +117,21 @@ class WatchlistStore(context: Context) {
     }
 
     /** 관심종목 카드 그래프: true면 당일(장 마감 후엔 직전 거래일), false면 1년 추이. 모든 종목에 공통으로 적용한다. */
-    fun loadWatchIntraday(): Boolean = preferences.getBoolean(WATCH_INTRADAY, false)
+    fun loadWatchIntraday(): Boolean = preferences.getBoolean(WATCH_INTRADAY, true)
 
     fun saveWatchIntraday(value: Boolean) {
         preferences.edit().putBoolean(WATCH_INTRADAY, value).apply()
     }
 
+    /** 증시동향 지수 칸 그래프: true면 당일, false면 1년 추이. 기본은 당일. */
+    fun loadIndexIntraday(): Boolean = preferences.getBoolean(INDEX_INTRADAY, true)
+
+    fun saveIndexIntraday(value: Boolean) {
+        preferences.edit().putBoolean(INDEX_INTRADAY, value).apply()
+    }
+
     private companion object {
+        const val INDEX_INTRADAY = "index_chart_intraday_v1"
         const val WATCH_INTRADAY = "watch_chart_intraday_v1"
         const val INDEX_MARKET = "index_market_v1"
         const val INDEX_BRIEFING = "index_briefing_v1"

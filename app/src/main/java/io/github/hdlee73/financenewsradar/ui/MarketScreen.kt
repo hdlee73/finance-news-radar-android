@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -47,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,7 +119,9 @@ data class MarketUiState(
     val intraday: Map<String, IntradaySeries> = emptyMap(),
     val watch: List<Instrument> = emptyList(),
     /** 관심종목 카드 그래프 종류(전체 공통): true면 당일, false면 1년 추이. */
-    val watchIntraday: Boolean = false,
+    val watchIntraday: Boolean = true,
+    /** 증시동향 지수 칸 그래프 종류: true면 당일, false면 1년 추이. */
+    val indexIntraday: Boolean = true,
     val quotes: Map<String, Quote> = emptyMap(),
     val histories: Map<String, PriceHistory> = emptyMap(),
     val isRefreshing: Boolean = false,
@@ -139,7 +143,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     private var statsLoadedAt = 0L
     /** 통계 요청 번호. 선택을 바꾼 뒤 늦게 도착한 이전 요청의 응답이 새 결과를 덮어쓰지 않게 한다. */
     private var statsRequest = 0
-    private val _state = MutableStateFlow(MarketUiState(watch = store.load(), indexes = store.loadIndexSelection(), statSelection = store.loadStatSelection(), watchIntraday = store.loadWatchIntraday()))
+    private val _state = MutableStateFlow(MarketUiState(watch = store.load(), indexes = store.loadIndexSelection(), statSelection = store.loadStatSelection(), watchIntraday = store.loadWatchIntraday(), indexIntraday = store.loadIndexIntraday()))
     val state: StateFlow<MarketUiState> = _state.asStateFlow()
     private var refreshJob: Job? = null
     private val chartFailedAt = HashMap<String, Long>()
@@ -232,6 +236,13 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         if (value) viewModelScope.launch { loadIntraday() }
     }
 
+    /** 증시동향 지수 칸 그래프를 당일/1년 추이 중 고르고 저장한다. 1년을 고르면 일별 시세를 바로 받는다. */
+    fun setIndexIntraday(value: Boolean) {
+        store.saveIndexIntraday(value)
+        _state.update { it.copy(indexIntraday = value) }
+        if (value) viewModelScope.launch { loadIntraday() } else viewModelScope.launch { loadCharts() }
+    }
+
     /** 증시동향·브리핑에 보일 지표 선택을 저장하고 시세를 다시 받아 온다. */
     fun setIndexSelection(selection: IndexSelection) {
         store.saveIndexSelection(selection)
@@ -269,16 +280,17 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun loadCharts() {
         val now = System.currentTimeMillis()
-        val todo = _state.value.watch.filter {
-            it.symbol !in _state.value.histories && now - (chartFailedAt[it.symbol] ?: 0) > 60_000
+        val symbols = (_state.value.watch.map { it.symbol } + if (_state.value.indexIntraday) emptyList() else indexSymbols()).distinct()
+        val todo = symbols.filter {
+            it !in _state.value.histories && now - (chartFailedAt[it] ?: 0) > 60_000
         }
         todo.chunked(2).forEach { chunk ->
             coroutineScope {
-                chunk.map { item ->
+                chunk.map { symbol ->
                     async {
-                        runCatching { client.history(item.symbol) }
-                            .onSuccess { h -> _state.update { it.copy(histories = it.histories + (item.symbol to h)) } }
-                            .onFailure { chartFailedAt[item.symbol] = System.currentTimeMillis() }
+                        runCatching { client.history(symbol) }
+                            .onSuccess { h -> _state.update { it.copy(histories = it.histories + (symbol to h)) } }
+                            .onFailure { chartFailedAt[symbol] = System.currentTimeMillis() }
                     }
                 }.awaitAll()
             }
@@ -393,7 +405,12 @@ fun MarketScreen(viewModel: MarketViewModel, modifier: Modifier = Modifier) {
             }
         }
         item {
-            SubHeading("증시동향") { SoftButton(onClick = { indexPicking = true }) { Text("지표 선택", fontSize = 12.sp) } }
+            SubHeading("증시동향") {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SoftButton(onClick = { viewModel.setIndexIntraday(!state.indexIntraday) }) { Text(if (state.indexIntraday) "그래프: 당일" else "그래프: 1년", fontSize = 12.sp) }
+                    SoftButton(onClick = { indexPicking = true }) { Text("지표 선택", fontSize = 12.sp) }
+                }
+            }
         }
         item { IndexPanel(state) }
         item {
@@ -492,7 +509,7 @@ private fun IndexPanel(state: MarketUiState) {
         if (wide.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 wide.forEach {
-                    IndexTile(it, state.quotes[it.symbol], state.intraday[it.symbol], wide = true, tinted = false, modifier = Modifier.weight(1f))
+                    IndexTile(it, state.quotes[it.symbol], state.intraday[it.symbol], state.histories[it.symbol], state.indexIntraday, wide = true, tinted = false, modifier = Modifier.weight(1f))
                 }
                 if (wide.size == 1) Spacer(Modifier.weight(1f))
             }
@@ -500,13 +517,13 @@ private fun IndexPanel(state: MarketUiState) {
         small.chunked(3).forEach { items ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items.forEach { item ->
-                    IndexTile(item, state.quotes[item.symbol], state.intraday[item.symbol], wide = false, tinted = true, modifier = Modifier.weight(1f))
+                    IndexTile(item, state.quotes[item.symbol], state.intraday[item.symbol], state.histories[item.symbol], state.indexIntraday, wide = false, tinted = true, modifier = Modifier.weight(1f))
                 }
                 repeat(3 - items.size) { Spacer(Modifier.weight(1f)) }
             }
         }
         Text(
-            stamp(state.quotes["^KS11"]) + " · 해외 지수·환율은 지연될 수 있음 · 그래프는 당일(장 마감 후엔 직전 거래일) 흐름",
+            stamp(state.quotes["^KS11"]) + " · 해외 지수·환율은 지연될 수 있음 · 그래프는 " + if (state.indexIntraday) "당일(장 마감 후엔 직전 거래일) 흐름" else "최근 1년 추이",
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -515,7 +532,7 @@ private fun IndexPanel(state: MarketUiState) {
 
 @Composable
 private fun IndexTile(
-    item: Instrument, quote: Quote?, series: IntradaySeries?, wide: Boolean, tinted: Boolean, modifier: Modifier = Modifier
+    item: Instrument, quote: Quote?, series: IntradaySeries?, history: PriceHistory?, showIntraday: Boolean, wide: Boolean, tinted: Boolean, modifier: Modifier = Modifier
 ) {
     val color = changeColor(quote?.change)
     val price = quote?.let { priceText(item, it.price) } ?: "—"
@@ -539,7 +556,8 @@ private fun IndexTile(
                     Text(item.name, style = nameStyle, color = MaterialTheme.colorScheme.primary, maxLines = 1)
                     Text(price, Modifier.padding(top = 2.dp), style = priceStyle, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
                 }
-                IntradayChart(series, color, Modifier.weight(0.8f).height(30.dp))
+                if (showIntraday) IntradayChart(series, color, Modifier.weight(0.8f).height(30.dp))
+                else Sparkline(history?.closes.orEmpty(), Modifier.weight(0.8f).height(30.dp))
             }
             // 등락률 괄호까지 들어가도록 차트 아래 칸 전체 폭을 쓴다(차트 옆 좁은 칸에서는 잘림).
             Text(delta, Modifier.padding(top = 2.dp), style = deltaStyle, color = color, maxLines = 1)
@@ -548,7 +566,8 @@ private fun IndexTile(
             // 코스피·코스닥 이외 칸은 수치를 오른쪽 끝에 맞춘다.
             Text(price, Modifier.fillMaxWidth().padding(top = 1.dp), style = priceStyle, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
             Text(delta, Modifier.fillMaxWidth().padding(top = 1.dp), style = deltaStyle, color = color, maxLines = 1, textAlign = TextAlign.End)
-            IntradayChart(series, color, Modifier.fillMaxWidth().padding(top = 4.dp).height(26.dp))
+            if (showIntraday) IntradayChart(series, color, Modifier.fillMaxWidth().padding(top = 4.dp).height(26.dp))
+            else Sparkline(history?.closes.orEmpty(), Modifier.fillMaxWidth().padding(top = 4.dp).height(26.dp))
         }
     }
 }
@@ -591,19 +610,16 @@ private fun StatsPanel(state: MarketUiState, selected: Set<String>, onPick: () -
                         style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
-                    rows.forEachIndexed { index, item ->
-                        val color = changeColor(item.change)
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(item.name, style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(periodLabel(item.period) + " 기준", style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // 관심종목처럼 한 줄에 두 개씩. 긴 값(외환보유액 등)은 잘리지 않게 줄바꿈한다.
+                    rows.chunked(2).forEachIndexed { row, pair ->
+                        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                            pair.forEachIndexed { col, item ->
+                                if (col > 0) VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                StatCell(item, Modifier.weight(1f))
                             }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(statText(item, item.value), style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp), maxLines = 1)
-                                Text(statDelta(item) ?: "직전 값 —", style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold), color = color, maxLines = 1)
-                            }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
-                        if (index < rows.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        if (row < (rows.size - 1) / 2) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
         }
@@ -619,6 +635,17 @@ private fun StatsPanel(state: MarketUiState, selected: Set<String>, onPick: () -
             Modifier.padding(start = 2.dp, top = 6.dp),
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp), color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun StatCell(item: StatItem, modifier: Modifier = Modifier) {
+    val color = changeColor(item.change)
+    Column(modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Text(item.name, style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(periodLabel(item.period) + " 기준", style = TextStyle(fontSize = 9.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        Text(statText(item, item.value), Modifier.padding(top = 2.dp), style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp, lineHeight = 15.sp))
+        Text(statDelta(item) ?: "직전 값 —", style = TextStyle(fontSize = 9.5.sp, fontWeight = FontWeight.Medium), color = color)
     }
 }
 
